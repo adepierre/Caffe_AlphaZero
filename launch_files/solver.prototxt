@@ -1,0 +1,10 @@
+net: "net_tic_tac_6_4.prototxt"
+type: "Adam"
+base_lr: 0.005
+momentum: 0.9
+lr_policy: "fixed"
+weight_decay: 0.0001
+
+display: 250
+snapshot: 1000
+snapshot_prefix: "net_tic_tac_6_4"
