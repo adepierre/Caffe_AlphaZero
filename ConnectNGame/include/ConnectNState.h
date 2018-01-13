@@ -52,7 +52,7 @@ public:
 
 	/**
 	* \brief Ask for the user an action to perform
-	* \return A string representing the current state
+	* \return A valid action
 	*/
 	Action AskInput() const;
 

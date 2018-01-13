@@ -1,7 +1,7 @@
 #include <vector>
 #include <unordered_map>
 
-//Action can be justan int or a custom
+//Action can be just an int or a custom
 //struct/class following this example
 struct ExampleAction
 {
@@ -93,7 +93,7 @@ public:
 
 	/**
 	* \brief Ask for the user an action to perform
-	* \return A string representing the current state
+	* \return A valid action
 	*/
 	virtual Action AskInput() const;
 };
