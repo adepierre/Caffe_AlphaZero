@@ -17,11 +17,11 @@ DEFINE_int32(num_test, 25, "Number of games used for testing (or at the end of e
 
 //Training flags
 DEFINE_string(solver_file, "solver.prototxt", "Solver file for training");
+DEFINE_int32(batch_size, 512, "Batch size used for training");
 DEFINE_double(alpha, 0.3, "Dirichlet noise used during self play");
 DEFINE_int32(max_size_memory, 10000, "Maximum size of the memory buffer");
-DEFINE_int32(num_epoch, 100, "Number of epoch (one epoch is self-play + training + testing)");
-DEFINE_int32(num_game_per_epoch, 50, "Number of games played per epoch");
-DEFINE_int32(num_train_step, 5, "Number of training step of the network between two self-play games");
+DEFINE_int32(num_game, 10000, "Number of self-played games");
+DEFINE_int32(num_playing_thread, 4, "Number of threads used to generate games");
 DEFINE_string(log_file, "log.csv", "Name of the file to log the losses during training");
 DEFINE_double(epsilon, 0.25, "Dirichlet noise weight");
 DEFINE_string(snapshot, "", "Solverstate file to restart training");
@@ -59,13 +59,8 @@ int main(int argc, char** argv)
 
 	if (FLAGS_train)
 	{
-		AlphaZero<ConnectNState<int>, int> trainer(FLAGS_solver_file, FLAGS_snapshot, FLAGS_num_playouts, FLAGS_c_puct, FLAGS_alpha, FLAGS_epsilon, FLAGS_max_size_memory, FLAGS_num_game_per_epoch, FLAGS_num_train_step, FLAGS_num_test, FLAGS_log_file);
-
-		for (int i = 0; i < FLAGS_num_epoch; ++i)
-		{
-			trainer.Train();
-		}
-		trainer.Snapshot();
+		AlphaZero<ConnectNState<int>, int> trainer(FLAGS_solver_file, FLAGS_snapshot, FLAGS_num_playouts, FLAGS_c_puct, FLAGS_alpha, FLAGS_epsilon, FLAGS_max_size_memory, FLAGS_batch_size, FLAGS_log_file);
+		trainer.Train(FLAGS_num_game, FLAGS_num_test, FLAGS_num_playing_thread);
 	}
 	else
 	{

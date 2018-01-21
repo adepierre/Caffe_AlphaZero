@@ -7,6 +7,9 @@
 #include <vector>
 #include <random>
 #include <chrono>
+#include <thread>
+#include <mutex>
+#include <atomic>
 
 #include "MCTS.h"
 
@@ -23,9 +26,7 @@ public:
 	* \param alpha_ Dirichlet noise parameter
 	* \param epsilon_ Dirichlet noise weight
 	* \param max_buffer_size_ Size of the replay memory (older plays are discarded)
-	* \param num_game_ Number of games played between two tests
-	* \param num_train_ Number of training steps after each self play game
-	* \param num_test_ Number of testing games
+	* \param batch_size_ Size of the batch to use
 	* \param log_file_ File into the losses are logged during training
 	*/
 	AlphaZero(const std::string &solver_file,
@@ -35,9 +36,7 @@ public:
 			  const float &alpha_,
 			  const float &epsilon_,
 			  const int &max_buffer_size_,
-			  const int &num_game_,
-			  const int &num_train_,
-			  const int &num_test_,
+			  const int &batch_size_,
 			  const std::string &log_file_);
 	
 	/**
@@ -56,8 +55,11 @@ public:
 
 	/**
 	* \brief Perform one global training step : self play, train and then test the performance
+	* \param num_game_to_play Number of self-played games performed before returning
+	* \param num_test Number of game to play to evaluate the network performance
+	* \param num_playing_threads Number of threads running self-play. Warning: one network per thread is needed, make sure your GPU has enough memory
 	*/
-	void Train();
+	void Train(const int &num_game_to_play, const int &num_test, const int &num_playing_threads = 1);
 
 	/**
 	* \brief Perform one game IA vs Human and return the winner
@@ -87,9 +89,10 @@ public:
 	* \param N Number of game played (N/2 games playing first, N/2 playing second)
 	* \param opponent_num_playouts Number of playouts for the opponent
 	* \param display Whether to display the intermediate states during testing
+	* \param net The network to use (if not main net)
 	* \return A vector with the N winners (1 for the net, -1 for the opponent, 0 for a draw)
 	*/
-	std::vector<int> TestNet(const int &N, const int &opponent_num_playouts, const bool display = false);
+	std::vector<int> TestNet(const int &N, const int &opponent_num_playouts, const bool display = false, boost::shared_ptr<caffe::Net<float> > net = boost::shared_ptr<caffe::Net<float> >());
 
 	/**
 	* \brief Perform N games between two networks to compare them
@@ -100,11 +103,6 @@ public:
 	* \return A vector with the N winners (1 for the main net, -1 for the opponent net, 0 for a draw)
 	*/
 	std::vector<int> CompareNets(const int &N, const std::string &net_model, const std::string &trained_weights, bool display = false);
-
-	/**
-	* \Perform one snapshot of the current training state
-	*/
-	void Snapshot();
 
 	/**
 	* \brief Return the prediction of the net given the input state
@@ -122,50 +120,82 @@ public:
 	static std::pair<float, std::unordered_map<Action, float> > StateEvaluationRandomRollout(const State &s);
 
 private:
+
 	/**
-	* \brief Play one game alone to fill the replay buffer
+	* \Perform one snapshot of the current training state
 	*/
-	std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > SelfPlay();
+	void Snapshot();
+
+	/**
+	* \brief Simulate one game
+	* \param net The network to use for state evaluation
+	*/
+	std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > SelfPlay(boost::shared_ptr<caffe::Net<float> > net = boost::shared_ptr<caffe::Net<float> >());
+
+	/**
+	* \brief Play games on a separate thread to fill the replay buffer
+	* \param N number of played games
+	*/
+	void ThreadSelfPlay(const int &N);
+
+	/**
+	* \brief Test the current parameters against a pure MCTS algorithm
+	* \param num_game Number of games played for testing
+	*/
+	void ThreadTest(const int &num_game);
 
 	/**
 	* \brief Train the network from self play samples
 	*/
 	void TrainNet();
+
+	/**
+	* \brief Reshape a network with a new batch size
+	* \param net A shared pointer on the network
+	* \param new_batch_size The new batch size we want to set
+	*/
+	void ReshapeNet(const boost::shared_ptr<caffe::Net<float> > net, const int &new_batch_size);
 	
 private:
+	boost::shared_ptr<caffe::Solver<float> > solver;
 	boost::shared_ptr<caffe::Net<float> > main_net;
-
-	int num_playouts;
-	float c_puct;
-
+	
 	std::mt19937 random_engine;
 
-	//Training variables
-	//A copy (sharing layers weights) of the learning net but in test phase (for self play and testing)
-	boost::shared_ptr<caffe::Net<float> > copy_net;
+	//Used to know if the network has already had at least
+	//one training step (because of batch norm layers)
 	bool first_train;
 
-	boost::shared_ptr<caffe::Solver<float> > solver;
+	//The last saved training weights (for updating playing and testing nets)
+	//and when it was saved
+	std::mutex mutex_weights;
+	caffe::NetParameter last_weights;
+	int weights_iter;
+	int weights_num_games;
 
-	int batch_size;
-
+	//Used to save the past games
+	std::mutex mutex_buffer;
 	std::deque<std::tuple<State, std::unordered_map<Action, float>, int> > replay_buffer;
 	int max_buffer_size;
 	int num_game_played;
 
+	//Algorithm parameters
+	std::mutex mutex_opponent;
 	int opponent_playouts;
+
 	float alpha;
 	float epsilon;
+	int num_playouts;
+	float c_puct;
+	int batch_size;
 
+	//Log stuffs
+	std::mutex mutex_log;
 	std::ofstream log_file;
 	float loss_value;
 	float loss_probas;
 	float kl_div;
 	int iter_since_log;
-
-	int num_game;
-	int num_train;
-	int num_test;
 };
 
 template<class State, typename Action>
@@ -176,9 +206,7 @@ AlphaZero<State, Action>::AlphaZero(const std::string &solver_file,
 									const float &alpha_,
 									const float &epsilon_,
 									const int &max_buffer_size_,
-									const int &num_game_,
-									const int &num_train_,
-									const int &num_test_,
+									const int &batch_size_,
 									const std::string &log_file_)
 {
 #ifdef CPU_ONLY
@@ -193,9 +221,7 @@ AlphaZero<State, Action>::AlphaZero(const std::string &solver_file,
 	alpha = alpha_;
 	epsilon = epsilon_;
 
-	num_game = num_game_;
-	num_train = num_train_;
-	num_test = num_test_;
+	batch_size = batch_size_;
 
 	max_buffer_size = max_buffer_size_;
 	num_game_played = 0;
@@ -210,11 +236,11 @@ AlphaZero<State, Action>::AlphaZero(const std::string &solver_file,
 
 	solver.reset(caffe::SolverRegistry<float>::CreateSolver(solver_param));
 	main_net = solver->net();
-	batch_size = main_net->blob_by_name("input_data")->num();
+
+	ReshapeNet(main_net, batch_size);
 
 	if (snapshot.empty())
 	{
-		//Create the copy net
 		//While the net has not been trained for at least one iteration, we must use
 		//it in TRAIN phase because the batch norm layers don't have yet any statistics
 		//to use in test phase.
@@ -222,32 +248,12 @@ AlphaZero<State, Action>::AlphaZero(const std::string &solver_file,
 		//games but unfortunately I haven't found another solution yet :/
 		first_train = true;
 
-		//Copy the layers to the copy net
-		caffe::NetParameter param;
-		main_net->ToProto(&param, false);
-		copy_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TRAIN));
-		copy_net->CopyTrainedLayersFrom(param);
-
-		//Set batch size to 1 for the copy net
-		std::vector<int> shape;
-		boost::shared_ptr<caffe::Blob<float> > blob = copy_net->blob_by_name("input_data");
-		shape = blob->shape();
-		shape[0] = 1;
-		blob->Reshape(shape);
-		blob = copy_net->blob_by_name("label_value");
-		shape = blob->shape();
-		shape[0] = 1;
-		blob->Reshape(shape);
-		blob = copy_net->blob_by_name("label_probas");
-		shape = blob->shape();
-		shape[0] = 1;
-		blob->Reshape(shape);
-		copy_net->Reshape();
-
 		if (!log_file_.empty())
 		{
 			log_file.open(log_file_);
+			mutex_log.lock();
 			log_file << "Iter;Num Game played;Value loss;Probas loss;KL div;Num opponent playouts;Win;Draw;Lost" << std::endl;
+			mutex_log.unlock();
 		}
 	}
 	else
@@ -256,22 +262,18 @@ AlphaZero<State, Action>::AlphaZero(const std::string &solver_file,
 		
 		first_train = false;
 
-		//Copy the layers to the copy net
-		copy_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TEST));
-		//Share the layers' weights
-		copy_net->ShareTrainedLayersWith(main_net.get());
-		//Reshape to batch size 1
-		boost::shared_ptr<caffe::Blob<float> > blob = copy_net->blob_by_name("input_data");
-		std::vector<int> shape = blob->shape();
-		shape[0] = 1;
-		blob->Reshape(shape);
-		copy_net->Reshape();
-
 		if (!log_file_.empty())
 		{
 			log_file.open(log_file_, std::ofstream::app);
 		}
 	}
+
+
+	mutex_weights.lock();
+	main_net->ToProto(&last_weights, false);
+	weights_iter = solver->iter();
+	weights_num_games = 0;
+	mutex_weights.unlock();
 
 	random_engine = std::mt19937(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 }
@@ -293,19 +295,13 @@ AlphaZero<State, Action>::AlphaZero(const std::string &net_model,
 	epsilon = 0.0f;
 
 	main_net.reset(new caffe::Net<float>(net_model, caffe::Phase::TEST));
+	ReshapeNet(main_net, 1);
 	
 	if (!trained_weights.empty())
 	{
 		main_net->CopyTrainedLayersFromBinaryProto(trained_weights);
 	}
-
-	boost::shared_ptr<caffe::Blob<float> > blob_data = main_net->blob_by_name("input_data");
-	std::vector<int> shape = blob_data->shape();
-	shape[0] = 1;
-	blob_data->Reshape(shape);
-	main_net->Reshape();
-	copy_net = main_net;
-
+	
 	random_engine = std::mt19937(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 }
 
@@ -315,82 +311,44 @@ AlphaZero<State, Action>::~AlphaZero()
 }
 
 template<class State, typename Action>
-void AlphaZero<State, Action>::Train()
+void AlphaZero<State, Action>::Train(const int &num_game_to_play, const int &num_test, const int &num_playing_threads)
 {
-	for (int i = 0; i < num_game; ++i)
+	//Launch the self playing threads
+	std::vector<std::thread> playing_threads(num_playing_threads);
+	for (int i = 0; i < playing_threads.size(); ++i)
 	{
-		//Fill the memory with self play
-		std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > replay = SelfPlay();
-		num_game_played++;
-		for (int j = 0; j < replay.size(); ++j)
-		{
-			std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > symmetrized_replay = State::GetSymmetry(replay[j]);
-			replay_buffer.insert(replay_buffer.end(), symmetrized_replay.begin(), symmetrized_replay.end());
-		}
-
-		while (replay_buffer.size() > max_buffer_size)
-		{
-			replay_buffer.pop_front();
-		}
-
-		//Train the network with data taken from the replay buffer
-		for (int j = 0; j < num_train; ++j)
-		{
-			TrainNet();
-		}
+		playing_threads[i] = std::thread(&AlphaZero<State, Action>::ThreadSelfPlay, this, num_game_to_play);
 	}
 
-	//Evaluate
-	std::vector<int> winners = TestNet(num_test, opponent_playouts);
-
-	int current_net_victory = 0;
-	int opponent_victory = 0;
-	int draw = 0;
-
-	for (int i = 0; i < winners.size(); ++i)
+	//Start self playing thread
+	while (num_game_played < num_game_to_play)
 	{
-		switch (winners[i])
+		TrainNet();
+
+		//Every display iterations save the net weights
+		if (!first_train && solver->iter() % solver->param().display() == 0)
 		{
-		case 1:
-			current_net_victory++;
-			break;
-		case 0:
-			draw++;
-			break;
-		case -1:
-			opponent_victory++;
-			break;
-		default:
-			break;
+			mutex_weights.lock();
+			weights_iter = solver->iter();
+			weights_num_games = num_game_played;
+			main_net->ToProto(&last_weights, false);
+			mutex_weights.unlock();
+		}
+
+		//Every snapshot iteration launch a testing thread
+		if (!first_train && solver->iter() % solver->param().snapshot() == 0)
+		{
+			std::thread thread_test(&AlphaZero<State, Action>::ThreadTest, this, num_test);
+			thread_test.detach();
 		}
 	}
 
-	if (log_file.is_open())
+	for (int i = 0; i < playing_threads.size(); ++i)
 	{
-		log_file << solver->iter() << ";" << num_game_played << ";;;;" << opponent_playouts << ";" << current_net_victory << ";" << draw << ";" << opponent_victory << std::endl;
+		playing_threads[i].join();
 	}
 
-	std::cout << "Current network is";
-	if ((current_net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.55f)
-	{
-		std::cout << " better than ";
-	}
-	else if ((current_net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.45f)
-	{
-		std::cout << " as good as ";
-	}
-	else
-	{
-		std::cout << " weaker than ";
-	}
-	std::cout << "the opponent with " << opponent_playouts << " playouts (" << current_net_victory << "/" << draw << "/" << opponent_victory << ")" << std::endl;
-	
-	//If the net won almost every games, get a stronger opponent
-	if ((current_net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.9f && opponent_playouts < 10 * num_playouts)
-	{
-		std::cout << "It was a bit too easy. Increasing the opponent strength with " << num_playouts << " supplementary playouts (total: " << opponent_playouts + num_playouts << ")" << std::endl;
-		opponent_playouts += num_playouts;
-	}
+	Snapshot();
 }
 
 template<class State, typename Action>
@@ -471,12 +429,17 @@ std::pair<float, std::unordered_map<Action, float> > AlphaZero<State, Action>::S
 }
 
 template<class State, typename Action>
-std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > AlphaZero<State, Action>::SelfPlay()
+std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > AlphaZero<State, Action>::SelfPlay(boost::shared_ptr<caffe::Net<float> > net)
 {
+	if (!net)
+	{
+		net = main_net;
+	}
+
 	std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > output;
 	
 	State current_state;
-	MCTS<State, Action> play_tree(std::bind(&AlphaZero<State, Action>::StateEvaluation, copy_net, std::placeholders::_1), current_state, num_playouts, c_puct, epsilon, alpha);
+	MCTS<State, Action> play_tree(std::bind(&AlphaZero<State, Action>::StateEvaluation, net, std::placeholders::_1), current_state, num_playouts, c_puct, epsilon, alpha);
 	
 	float temperature = 1.0f;
 	int winner = current_state.Winner();
@@ -560,6 +523,172 @@ std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > AlphaZer
 }
 
 template<class State, typename Action>
+void AlphaZero<State, Action>::ThreadSelfPlay(const int &N)
+{
+#ifdef CPU_ONLY
+	caffe::Caffe::set_mode(caffe::Caffe::CPU);
+#else
+	caffe::Caffe::set_mode(caffe::Caffe::GPU);
+#endif
+
+	bool is_test = false;
+	int thread_weights_iter = 0;
+
+	//Create the network for this thread
+	boost::shared_ptr<caffe::Net<float> > thread_net;
+	if (first_train)
+	{
+		thread_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TRAIN));
+		is_test = false;
+	}
+	else
+	{
+		thread_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TEST));
+		is_test = true;
+	}
+
+	ReshapeNet(thread_net, 1);
+
+	mutex_weights.lock();
+	thread_weights_iter = weights_iter;
+	thread_net->CopyTrainedLayersFrom(last_weights);
+	mutex_weights.unlock();
+
+	while (num_game_played < N)
+	{
+		if (!is_test && !first_train)
+		{
+			thread_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TEST));
+			is_test = true;
+			ReshapeNet(thread_net, 1);
+			mutex_weights.lock();
+			thread_weights_iter = weights_iter;
+			thread_net->CopyTrainedLayersFrom(last_weights);
+			mutex_weights.unlock();
+		}
+
+		if (thread_weights_iter != weights_iter)
+		{
+			mutex_weights.lock();
+			thread_weights_iter = weights_iter;
+			thread_net->CopyTrainedLayersFrom(last_weights);
+			mutex_weights.unlock();
+		}
+
+		std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > replay = SelfPlay(thread_net);
+		std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > augmented_replay;
+		for (int j = 0; j < replay.size(); ++j)
+		{
+			std::vector<std::tuple<State, std::unordered_map<Action, float>, int> > local_symmetrized_replay = State::GetSymmetry(replay[j]);
+			augmented_replay.insert(augmented_replay.end(), local_symmetrized_replay.begin(), local_symmetrized_replay.end());
+		}
+
+		mutex_buffer.lock();
+		for (int i = 0; i < augmented_replay.size(); ++i)
+		{
+			replay_buffer.push_back(augmented_replay[i]);
+		}
+		while (replay_buffer.size() > max_buffer_size)
+		{
+			replay_buffer.pop_front();
+		}
+		num_game_played++;
+		mutex_buffer.unlock();
+	}
+}
+
+template<class State, typename Action>
+void AlphaZero<State, Action>::ThreadTest(const int &N)
+{
+#ifdef CPU_ONLY
+	caffe::Caffe::set_mode(caffe::Caffe::CPU);
+#else
+	caffe::Caffe::set_mode(caffe::Caffe::GPU);
+#endif
+
+	//Create the network for this thread
+	boost::shared_ptr<caffe::Net<float> > thread_net;
+	if (first_train)
+	{
+		thread_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TRAIN));
+	}
+	else
+	{
+		thread_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TEST));
+	}
+
+	ReshapeNet(thread_net, 1);
+
+	mutex_weights.lock();
+	int current_weight_iter = weights_iter;
+	int current_weight_game = weights_num_games;
+	thread_net->CopyTrainedLayersFrom(last_weights);
+	mutex_weights.unlock();
+
+	int current_opponent_playouts = opponent_playouts;
+
+	//Perform the test
+	std::vector<int> winners = TestNet(N, current_opponent_playouts, false, thread_net);
+
+	//Process the results
+	int net_victory = 0;
+	int opponent_victory = 0;
+	int draw = 0;
+
+	for (int i = 0; i < winners.size(); ++i)
+	{
+		switch (winners[i])
+		{
+		case 1:
+			net_victory++;
+			break;
+		case 0:
+			draw++;
+			break;
+		case -1:
+			opponent_victory++;
+			break;
+		default:
+			break;
+		}
+	}
+
+	if (log_file.is_open())
+	{
+		mutex_log.lock();
+		log_file << current_weight_iter << ";" << current_weight_game << ";;;;" << current_opponent_playouts << ";" << net_victory << ";" << draw << ";" << opponent_victory << std::endl;
+		mutex_log.unlock();
+	}
+
+	std::cout << "Current network is";
+	if ((net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.55f)
+	{
+		std::cout << " better than ";
+	}
+	else if ((net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.45f)
+	{
+		std::cout << " as good as ";
+	}
+	else
+	{
+		std::cout << " weaker than ";
+	}
+	std::cout << "the opponent with " << current_opponent_playouts << " playouts (" << net_victory << "/" << draw << "/" << opponent_victory << ")" << std::endl;
+
+	//If the net won almost every games, get a stronger opponent
+	if ((net_victory + 0.5 * draw) / (float)(winners.size()) >= 0.9f && current_opponent_playouts < 10 * num_playouts)
+	{
+		mutex_opponent.lock();
+		if (current_opponent_playouts + num_playouts > opponent_playouts)
+		{
+			opponent_playouts += num_playouts;
+			std::cout << "It was a bit too easy. Increasing the opponent strength with " << num_playouts << " supplementary playouts (total: " << opponent_playouts << ")" << std::endl;
+		}
+		mutex_opponent.unlock();
+	}
+}
+
+template<class State, typename Action>
 void AlphaZero<State, Action>::TrainNet()
 {
 	if (batch_size > replay_buffer.size())
@@ -568,19 +697,9 @@ void AlphaZero<State, Action>::TrainNet()
 	}
 
 	//Once we have performed at least one training step, 
-	//we can reset the copy_net in TEST phase because
-	//the batch norm layers now have statistics
+	//nets can be used in TEST phase
 	if (first_train)
 	{
-		copy_net.reset(new caffe::Net<float>(solver->param().net(), caffe::Phase::TEST));
-		//Share the layers' weights
-		copy_net->ShareTrainedLayersWith(main_net.get());
-		//Reshape to batch size 1
-		boost::shared_ptr<caffe::Blob<float> > blob = copy_net->blob_by_name("input_data");
-		std::vector<int> shape = blob->shape();
-		shape[0] = 1;
-		blob->Reshape(shape);
-		copy_net->Reshape();
 		first_train = false;
 	}
 
@@ -595,15 +714,17 @@ void AlphaZero<State, Action>::TrainNet()
 
 	for (int i = 0; i < batch_size; ++i)
 	{
-		int replay_buffer_index = std::uniform_int_distribution<int>(0, replay_buffer.size() - 1)(random_engine);
+		mutex_buffer.lock();
+		std::tuple<State, std::unordered_map<Action, float>, int> current_data = replay_buffer[std::uniform_int_distribution<int>(0, replay_buffer.size() - 1)(random_engine)];
+		mutex_buffer.unlock();
 
 		//State input
-		State state = std::get<0>(replay_buffer[replay_buffer_index]);
+		State state = std::get<0>(current_data);
 		std::vector<float> state_input = state.ToNNInput();
 		caffe::caffe_copy(state_input.size(), state_input.data(), blob_state->mutable_cpu_data() + blob_state->offset(i));
 
 		//Value label
-		int winner = std::get<2>(replay_buffer[replay_buffer_index]);
+		int winner = std::get<2>(current_data);
 		float value_label = 0.0f;
 		if (winner == 0)
 		{
@@ -617,7 +738,7 @@ void AlphaZero<State, Action>::TrainNet()
 
 		//Probabilities
 		std::vector<float> action_proba(number_of_actions, 0.0f);
-		for (auto it = std::get<1>(replay_buffer[replay_buffer_index]).begin(); it != std::get<1>(replay_buffer[replay_buffer_index]).end(); ++it)
+		for (auto it = std::get<1>(current_data).begin(); it != std::get<1>(current_data).end(); ++it)
 		{
 			action_proba[(int)(it->first)] = it->second;
 			batch_entropy += -it->second * std::log(it->second);
@@ -629,18 +750,19 @@ void AlphaZero<State, Action>::TrainNet()
 
 	loss_value += blob_loss_value->cpu_data()[0];
 	loss_probas += blob_loss_probas->cpu_data()[0];
-	iter_since_log++;
 	kl_div += blob_loss_probas->cpu_data()[0] - batch_entropy / batch_size;
+	iter_since_log++;
 
 	if (log_file.is_open() && solver->iter() % solver->param().display() == 0)
 	{
+		mutex_log.lock();
 		log_file << solver->iter() << ";" << num_game_played << ";" << loss_value / iter_since_log << ";" << loss_probas / iter_since_log << ";" << kl_div / iter_since_log << ";;;;" << std::endl;
+		mutex_log.unlock();
 		iter_since_log = 0;
 		loss_value = 0.0f;
 		loss_probas = 0.0f;
 		kl_div = 0.0f;
 	}
-
 
 	//Perform a custom snapshot to be sure to save all useful variables
 	if (solver->iter() % solver->param().snapshot() == 0)
@@ -650,8 +772,13 @@ void AlphaZero<State, Action>::TrainNet()
 }
 
 template<class State, typename Action>
-std::vector<int> AlphaZero<State, Action>::TestNet(const int &N, const int &opponent_num_playouts, const bool display)
+std::vector<int> AlphaZero<State, Action>::TestNet(const int &N, const int &opponent_num_playouts, const bool display, boost::shared_ptr<caffe::Net<float> > net)
 {
+	if (!net)
+	{
+		net = main_net;
+	}
+
 	//Play N games
 	std::vector<int> winners;
 
@@ -676,7 +803,7 @@ std::vector<int> AlphaZero<State, Action>::TestNet(const int &N, const int &oppo
 		int current_player = current_state.GetCurrentPlayer();
 
 		MCTS<State, Action> play_tree_opponent(std::bind(&AlphaZero<State, Action>::StateEvaluationRandomRollout, std::placeholders::_1), current_state, opponent_num_playouts, c_puct, 0.0f);
-		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, copy_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
+		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
 
 		//Play the first action randomly to have a bit of diversity in the games
 		std::vector<Action> possible_actions = current_state.GetPossibleActions();
@@ -920,7 +1047,7 @@ std::vector<int> AlphaZero<State, Action>::RandomTest(const int &N, const bool d
 		int winner = current_state.Winner();
 		int current_player = current_state.GetCurrentPlayer();
 
-		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, copy_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
+		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, main_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
 
 		//Play the first action randomly to have a bit of diversity in the games
 		std::vector<Action> possible_actions = current_state.GetPossibleActions();
@@ -1042,7 +1169,7 @@ std::vector<int> AlphaZero<State, Action>::CompareNets(const int &N, const std::
 		int current_player = current_state.GetCurrentPlayer();
 
 		MCTS<State, Action> play_tree_opponent(std::bind(&AlphaZero<State, Action>::StateEvaluation, opponent_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
-		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, copy_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
+		MCTS<State, Action> play_tree_current(std::bind(&AlphaZero<State, Action>::StateEvaluation, main_net, std::placeholders::_1), current_state, num_playouts, c_puct, 0.0f);
 
 		//Play the first action randomly to have a bit of diversity in the games
 		std::vector<Action> possible_actions = current_state.GetPossibleActions();
@@ -1124,4 +1251,46 @@ std::vector<int> AlphaZero<State, Action>::CompareNets(const int &N, const std::
 	}
 
 	return winners;
+}
+
+template<class State, typename Action>
+void AlphaZero<State, Action>::ReshapeNet(const boost::shared_ptr<caffe::Net<float> > net, const int &new_batch_size)
+{
+	if (!net)
+	{
+		return;
+	}
+
+	std::vector<int> shape;
+	boost::shared_ptr<caffe::Blob<float> > blob = net->blob_by_name("input_data");
+	if (blob)
+	{
+		shape = blob->shape();
+		shape[0] = new_batch_size;
+		blob->Reshape(shape);
+	}
+
+	blob = net->blob_by_name("label_value");
+	if (blob)
+	{
+		shape = blob->shape();
+		shape[0] = new_batch_size;
+		blob->Reshape(shape);
+	}
+
+	blob = net->blob_by_name("label_probas");
+	if (blob)
+	{
+		shape = blob->shape();
+		shape[0] = new_batch_size;
+		blob->Reshape(shape);
+	}
+
+	boost::shared_ptr<caffe::Layer<float> > layer = net->layer_by_name("Cross_Entropy_Scale");
+	if (layer)
+	{
+		layer->blobs()[0]->mutable_cpu_data()[0] = 1.0f / new_batch_size;
+	}
+
+	net->Reshape();
 }

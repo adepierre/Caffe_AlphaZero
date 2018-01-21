@@ -40,7 +40,6 @@ To train the algorithm on a new game, you just have to create a YourGameState.h 
 
 This implementation differs from Deepmind's explanations in (at least) these points:
 * As the implemented games are much simpler than Go or Chess, the network's architecture is lighter, having only one residual block instead of 40 in the paper and 64 output channels instead of 256 for the convolution layers
-* Training and self-playing are not performed asynchronously. After each self-play game, N training steps of the network are performed
 * ReLU layers are replaced with leaky ReLU
 * MCTS is not parallelized
 * During testing the first action is selected randomly to ensure a bit of diversity in the games
@@ -49,7 +48,7 @@ This implementation differs from Deepmind's explanations in (at least) these poi
 ## TODO
 
 - [ ] Add a Elo-like rating system to monitor training improvement
-- [ ] Separate self-playing and training in two threads running asynchronously (for example two separated networks with periodic updates)
+- [x] Separate self-playing and training in two threads running asynchronously (for example two separated networks with periodic updates)
 - [x] Add the possibility to use symmetry
 - [ ] Parallelize MCTS and perform evaluation in batch
 - [ ] Add time limit instead of iteration limit when using MCTS for testing

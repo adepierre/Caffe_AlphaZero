@@ -1,8 +1,10 @@
 net: "net_tic_tac_6_4.prototxt"
-type: "Adam"
-base_lr: 0.005
+type: "SGD"
+base_lr: 0.2
 momentum: 0.9
-lr_policy: "fixed"
+lr_policy: "step"
+stepsize: 12500
+gamma: 0.25
 weight_decay: 0.0001
 
 display: 250
