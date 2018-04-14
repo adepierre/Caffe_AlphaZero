@@ -1,0 +1,477 @@
+layer {
+	name: "Input_data"
+	type: "Input"
+	top: "input_data"
+	input_param {
+		shape {
+			dim: 1 #batch_size
+			dim: 3
+            dim: 6
+            dim: 6
+		}
+	}
+}
+
+layer {
+	name: "Input_value"
+	type: "Input"
+	top: "label_value"
+	input_param {
+		shape {
+			dim: 1 #batch_size
+			dim: 1
+		}
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Input_probas"
+	type: "Input"
+	top: "label_probas"
+	input_param {
+		shape {
+			dim: 1 #batch_size
+			dim: 36
+		}
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+    name: "conv1"
+    type: "Convolution"
+    bottom: "input_data"
+    top: "conv1"
+    convolution_param {
+        num_output: 64
+        kernel_size: 3
+        stride: 1
+        pad: 1
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "conv1_relu"
+	type: "ReLU"
+	bottom: "conv1"
+	top: "conv1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+#Start of residual block 1
+layer {
+    name: "res1_conv1"
+    type: "Convolution"
+    bottom: "conv1"
+    top: "res1_conv1"
+    convolution_param {
+        num_output: 64
+        kernel_size: 3
+        stride: 1
+        pad: 1
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "res1_relu1"
+	type: "ReLU"
+	bottom: "res1_conv1"
+	top: "res1_conv1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+layer {
+    name: "res1_conv2"
+    type: "Convolution"
+    bottom: "res1_conv1"
+    top: "res1_conv2"
+    convolution_param {
+        num_output: 64
+        kernel_size: 3
+        stride: 1
+        pad: 1
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "res1_sum"
+	type: "Eltwise"
+	bottom: "conv1"
+	bottom: "res1_conv2"
+	top: "res1"
+	eltwise_param {
+		operation: SUM
+	}
+}
+
+layer {
+	name: "res1_relu2"
+	type: "ReLU"
+	bottom: "res1"
+	top: "res1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+#Start of residual block 2
+layer {
+    name: "res2_conv1"
+    type: "Convolution"
+    bottom: "res1"
+    top: "res2_conv1"
+    convolution_param {
+        num_output: 64
+        kernel_size: 3
+        stride: 1
+        pad: 1
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "res1_relu1"
+	type: "ReLU"
+	bottom: "res2_conv1"
+	top: "res2_conv1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+layer {
+    name: "res2_conv2"
+    type: "Convolution"
+    bottom: "res2_conv1"
+    top: "res2_conv2"
+    convolution_param {
+        num_output: 64
+        kernel_size: 3
+        stride: 1
+        pad: 1
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "res2_sum"
+	type: "Eltwise"
+	bottom: "res1"
+	bottom: "res2_conv2"
+	top: "res2"
+	eltwise_param {
+		operation: SUM
+	}
+}
+
+layer {
+	name: "res2_relu2"
+	type: "ReLU"
+	bottom: "res2"
+	top: "res2"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+### Value head ###
+
+layer {
+    name: "Value_conv1"
+    type: "Convolution"
+    bottom: "res2"
+    top: "value_conv1"
+    convolution_param {
+        num_output: 2
+        kernel_size: 1
+        stride: 1
+        pad: 0
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "value_relu1"
+	type: "ReLU"
+	bottom: "value_conv1"
+	top: "value_conv1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+layer {
+	name: "Value_fc1"
+	type: "InnerProduct"
+	bottom: "value_conv1"
+	top: "value_fc1"
+	inner_product_param {
+		num_output: 256
+		weight_filler {
+            type: "gaussian"
+            std: 0.01
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+	}
+}
+
+layer {
+	name: "relu_value_fc1"
+	type: "ReLU"
+	bottom: "value_fc1"
+	top: "value_fc1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+layer {
+	name: "Value_Output"
+	type: "InnerProduct"
+	bottom: "value_fc1"
+	top: "output_value"
+	inner_product_param {
+		num_output: 1
+		weight_filler {
+            type: "gaussian"
+            std: 0.01
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+	}
+}
+
+layer {
+	name: "TanH_value"
+	type: "TanH"
+	bottom: "output_value"
+	top: "output_value"
+}
+
+layer {
+	name: "Value_loss"
+	type: "EuclideanLoss"
+	bottom: "output_value"
+	bottom: "label_value"
+	top: "value_loss"
+	include {
+		phase: TRAIN
+	}
+}
+
+### Probas head ###
+
+layer {
+    name: "Probas_conv1"
+    type: "Convolution"
+    bottom: "res2"
+    top: "probas_conv1"
+    convolution_param {
+        num_output: 2
+        kernel_size: 1
+        stride: 1
+        pad: 0
+        weight_filler {
+            type: "gaussian"
+            std: 0.01
+        }
+        bias_filler {
+            type: "constant"
+            value: 0
+        }
+    }
+}
+
+layer {
+	name: "probas_relu1"
+	type: "ReLU"
+	bottom: "probas_conv1"
+	top: "probas_conv1"
+    relu_param {
+        negative_slope: 0.02
+    }
+}
+
+layer {
+	name: "Probas_Output"
+	type: "InnerProduct"
+	bottom: "probas_conv1"
+	top: "raw_output_probas"
+	inner_product_param {
+		num_output: 36
+		weight_filler {
+            type: "gaussian"
+            std: 0.01
+		}
+		bias_filler {
+			type: "constant"
+			value: 0
+		}
+	}
+}
+
+layer {
+	name: "Probas_Softmax"
+	type: "Softmax"
+	bottom: "raw_output_probas"
+	top: "output_probas"
+}
+
+### As Caffe doesn't have a cross entropy loss layer, we create it from existing layers ###
+layer {
+	name: "Log_Probas"
+	type: "Log"
+	bottom: "output_probas"
+	top: "log_output_probas"
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Minus_Log_Probas"
+	type: "Scale"
+	bottom: "log_output_probas"
+	top: "minus_log_probas"
+	param {
+		lr_mult: 0
+		decay_mult: 0
+	}
+	scale_param {
+        axis: 0
+		num_axes: 0
+		filler {
+			type: "constant"
+			value: -1
+		}
+		bias_term: false
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Cross_Entropy_Mult"
+	type: "Eltwise"
+	bottom: "minus_log_probas"
+	bottom: "label_probas"
+	top: "eltwise_prod"
+	eltwise_param {
+		operation: PROD
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Cross_entropy_first_sum"
+	type: "Reduction"
+	bottom: "eltwise_prod"
+	top: "cross_entropy_summed"
+	reduction_param {
+		operation: SUM
+		axis: 1
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Cross_Entropy_Scale"
+	type: "Scale"
+	bottom: "cross_entropy_summed"
+	top: "cross_entropy_scaled"
+	param {
+		lr_mult: 0
+		decay_mult: 0
+	}
+	scale_param {
+        axis: 0
+		num_axes: 0
+		filler {
+			type: "constant"
+			value: 1 #1 / batch_size
+		}
+		bias_term: false
+	}
+	include {
+		phase: TRAIN
+	}
+}
+
+layer {
+	name: "Cross_entropy_loss"
+	type: "Reduction"
+	bottom: "cross_entropy_scaled"
+	top: "probas_loss"
+	reduction_param {
+		operation: SUM
+		axis: 0
+	}
+	include {
+		phase: TRAIN
+	}
+    loss_weight: 1
+}

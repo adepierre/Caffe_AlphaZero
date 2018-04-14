@@ -405,6 +405,7 @@ Action ConnectNState<Action>::AskInput() const
 	std::vector<Action> possible_actions = GetPossibleActions();
 	while (!is_possible)
 	{
+		std::cout << ToString() << std::endl;
 		std::cout << "Column? ";
 		std::cin >> col;
 		std::cout << std::endl;

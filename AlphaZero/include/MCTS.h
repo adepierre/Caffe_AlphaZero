@@ -19,17 +19,19 @@ public:
 	* \brief Construct a MCTS object to perform evaluations
 	* \param f Evaluation function : takes a state as input and returns both a score from the current player perspective and the estimated probabilities for every possible actions
 	* \param init_sate Initial state of the root
-	* \param n_simulation_ Number of iteration before action selection
+	* \param n_simulation_ Number of iteration before action selection (-1 to use time limit)
+	* \param n_milliseconds_ Number of milliseconds to think the next move (-1 to use iteration limit)
 	* \param c_puct_ Exploration constant (Q + c_puct_ * P * U) 
 	* \param epsilon_ Noise weight (P = P * (1 - eps) + noise * eps)
 	* \param alpha_ Noise parameter (noise = Dirichlet(alpha))
 	*/
 	MCTS(const std::function<std::pair<float, std::unordered_map<Action, float> >(State)> &f,
-		 const State init_state,
-		 const int &n_simulation_ = 500,
-		 const float &c_puct_ = 5.0f,
-		 const float &epsilon_ = 0.25f,
-		 const float &alpha_ = 0.3f);
+		 const State &init_state,
+		 const int n_simulation_,
+		 const int n_milliseconds_,
+		 const float c_puct_,
+		 const float epsilon_,
+		 const float alpha_ = 0.3f);
 
 	~MCTS();
 
@@ -61,6 +63,7 @@ private:
 	
 private:
 	int n_simulation;
+	int n_milliseconds;
 	float c_puct;
 	float epsilon;
 	float alpha;
@@ -74,18 +77,25 @@ private:
 
 template<class State, typename Action>
 MCTS<State, Action>::MCTS(const std::function<std::pair<float, std::unordered_map<Action, float> >(State)> &f,
-						  const State init_state,
-						  const int &n_simulation_,
-						  const float &c_puct_,
-						  const float &epsilon_,
-						  const float &alpha_)
+						  const State &init_state,
+						  const int n_simulation_,
+						  const int n_milliseconds_,
+						  const float c_puct_,
+						  const float epsilon_,
+						  const float alpha_)
 {
 	EvaluationFunction = f;
 	n_simulation = n_simulation_;
+	n_milliseconds = n_milliseconds_;
 	c_puct = c_puct_;
 	epsilon = epsilon_;
 	alpha = alpha_;
 
+	if (n_simulation < 0 && n_milliseconds < 0)
+	{
+		n_milliseconds = 1000;
+	}
+	
 	random_engine = std::mt19937(std::chrono::high_resolution_clock::now().time_since_epoch().count());
 
 	root = new Node<State, Action>(init_state, 1.0f, nullptr);
@@ -109,12 +119,25 @@ MCTS<State, Action>::~MCTS()
 template<class State, typename Action>
 std::unordered_map<Action, int> MCTS<State, Action>::GetActionVisitCount()
 {
-	//Perform n_simulation from the current root
-	for (int i = 0; i < n_simulation; ++i)
+	if (n_simulation >= 0)
 	{
-		Iteration();
+		//Perform n_simulation from the current root
+		for (int i = 0; i < n_simulation; ++i)
+		{
+			Iteration();
+		}
 	}
-
+	else
+	{
+		auto begin = std::chrono::high_resolution_clock::now();
+		auto now = std::chrono::high_resolution_clock::now();
+		while (std::chrono::duration_cast<std::chrono::milliseconds>(now - begin).count() < n_milliseconds)
+		{
+			Iteration();
+			now = std::chrono::high_resolution_clock::now();
+		}
+	}
+	
 	//Get the probabilities for each action from the visit count of the child
 	std::unordered_map<Action, int> visit_count = root->GetActionVisitCount();
 
@@ -212,7 +235,7 @@ void MCTS<State, Action>::AddDirichletToRoot()
 
 	for (int i = 0; i < dirichlet_noise.size(); ++i)
 	{
-		dirichlet_noise[i] /= sum;
+		dirichlet_noise[i] /= sum + 0.0000001f;
 	}
 
 	root->AddNoiseToChildren(dirichlet_noise, epsilon);

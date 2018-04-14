@@ -18,7 +18,7 @@ Once you have correctly built and compiled the code, you should be able to launc
 
 ## <a name="testing"></a>Testing
 
-There are four testing modes available:
+There are five testing modes available:
 * Human test: N games between the algorithm and the user
 * Self test: N games in which the algorithm plays both players
 * Compare test: N games played between two models to determine which one is the best
@@ -31,6 +31,10 @@ An example of a command line used to perform tests can be found in `launch_files
 
 An example of a command line used to train a network can be found in `launch_files/train_tic_tac.bat`. The training process can be stopped and restarted at any time using .solverstate files. However, the memory buffer is not saved and has to be filled again.
 
+These are the loss I obtained when training a network with 2 residual blocks.
+
+![Loss curves](launch_files/training_curves.jpg)
+
 
 ## Implementing a new game
 
@@ -39,7 +43,7 @@ To train the algorithm on a new game, you just have to create a YourGameState.h 
 ## <a name="diff"></a>Differences with the original paper
 
 This implementation differs from Deepmind's explanations in (at least) these points:
-* As the implemented games are much simpler than Go or Chess, the network's architecture is lighter, having only one residual block instead of 40 in the paper and 64 output channels instead of 256 for the convolution layers
+* As the implemented games are much simpler than Go or Chess, the network's architecture is lighter, having only one or two residual blocks instead of 40 in the paper and 64 output channels instead of 256 for the convolution layers
 * ReLU layers are replaced with leaky ReLU
 * MCTS is not parallelized
 * During testing the first action is selected randomly to ensure a bit of diversity in the games
@@ -48,10 +52,10 @@ This implementation differs from Deepmind's explanations in (at least) these poi
 ## TODO
 
 - [ ] Add a Elo-like rating system to monitor training improvement
-- [x] Separate self-playing and training in two threads running asynchronously (for example two separated networks with periodic updates)
+- [x] Separate self-playing and training in two threads running asynchronously (for example two separated networks with periodic updates) <-- In fact it did not speed up the process as the threads are waiting for the GPU to be available (see [https://github.com/BVLC/caffe/issues/5855](https://github.com/BVLC/caffe/issues/5855))
 - [x] Add the possibility to use symmetry
 - [ ] Parallelize MCTS and perform evaluation in batch
-- [ ] Add time limit instead of iteration limit when using MCTS for testing
+- [x] Add time limit instead of iteration limit when using MCTS for testing <--Set in the MCTS class, not called from the main file for now
 - [ ] Save memory buffer when the training process is stopped
 
 ## License

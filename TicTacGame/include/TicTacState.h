@@ -294,8 +294,7 @@ std::string TicTacState<Action>::ToString() const
 {
 	std::string output;
 
-	output += "-----\n";
-	output += "| ";
+	output += "Current player: ";
 	if (current_player == 1)
 	{
 		output += "x";
@@ -304,9 +303,9 @@ std::string TicTacState<Action>::ToString() const
 	{
 		output += "o";
 	}
-	output += " |\n";
+	output += "\n";
 
-	for (int i = 0; i < board_size * 3 + 2; ++i)
+	for (int i = 0; i < board_size * 4 + 1; ++i)
 	{
 		output += "-";
 	}
@@ -314,27 +313,31 @@ std::string TicTacState<Action>::ToString() const
 
 	for (int i = 0; i < board_size; ++i)
 	{
-		output += "|";
 		for (int j = 0; j < board_size; ++j)
 		{
 			if (board[board_size * i + j] == -1)
 			{
-				output += " o ";
+				output += "| o ";
 			}
 			else if (board[board_size * i + j] == 1)
 			{
-				output += " x ";
+				output += "| x ";
 			}
 			else
 			{
-				output += "   ";
+				output += "|   ";
 			}
 		}
-		output += "|\n";
+		output += "|  " + std::to_string(i) + "\n";
+		for (int j = 0; j < board_size * 4 + 1; ++j)
+		{
+			output += "-";
+		}
+		output += "\n";
 	}
-	for (int i = 0; i < board_size * 3 + 2; ++i)
+	for (int i = 0; i < board_size; ++i)
 	{
-		output += "-";
+		output += "  " + std::to_string(i)+ " ";
 	}
 	output += "\n";
 

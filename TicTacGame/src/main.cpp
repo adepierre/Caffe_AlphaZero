@@ -16,11 +16,10 @@ DEFINE_int32(num_test, 25, "Number of games used for testing (or at the end of e
 
 //Training flags
 DEFINE_string(solver_file, "solver.prototxt", "Solver file for training");
-DEFINE_int32(batch_size, 512, "Batch size used for training");
+DEFINE_int32(batch_size, 2, "Batch size used for training");
 DEFINE_double(alpha, 0.3, "Dirichlet noise used during self play");
 DEFINE_int32(max_size_memory, 10000, "Maximum size of the memory buffer");
 DEFINE_int32(num_game, 10000, "Number of self-played games");
-DEFINE_int32(num_playing_thread, 4, "Number of threads used to generate games");
 DEFINE_string(log_file, "log.csv", "Name of the file to log the losses during training");
 DEFINE_double(epsilon, 0.25, "Dirichlet noise weight");
 DEFINE_string(snapshot, "", "Solverstate file to restart training");
@@ -58,7 +57,7 @@ int main(int argc, char** argv)
 	if (FLAGS_train)
 	{
 		AlphaZero<TicTacState<int>, int> trainer(FLAGS_solver_file, FLAGS_snapshot, FLAGS_num_playouts, FLAGS_c_puct, FLAGS_alpha, FLAGS_epsilon, FLAGS_max_size_memory, FLAGS_batch_size, FLAGS_log_file);
-		trainer.Train(FLAGS_num_game, FLAGS_num_test, FLAGS_num_playing_thread);
+		trainer.Train(FLAGS_num_game, FLAGS_num_test);
 	}
 	else
 	{
@@ -80,7 +79,7 @@ int main(int argc, char** argv)
 		}
 		else if (FLAGS_test_mode.compare("MCTS") == 0)
 		{
-			winners = tester.TestNet(FLAGS_num_test, FLAGS_opponent_playouts, FLAGS_display);
+			winners = tester.MCTSTest(FLAGS_num_test, FLAGS_opponent_playouts, FLAGS_display);
 		}
 		else if (FLAGS_test_mode.compare("Random") == 0)
 		{
